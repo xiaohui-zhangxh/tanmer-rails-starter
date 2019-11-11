@@ -21,8 +21,8 @@ module Gemfile
     def gem_args_string
       args = ["'#{@name}'"]
       args << "'#{@version}'" if @version
-      @opts.each do |name,value|
-        args << ":#{name}=>#{value.inspect}"
+      @opts.each do |name, value|
+        args << "#{name}: #{value.inspect}"
       end
       args.join(', ')
     end
@@ -166,8 +166,7 @@ end
 # 数据库配置
 
 stage_two do
-  remove_file 'config/database.yml'
-  create_file 'config/database.yml', <<~YAML
+  create_file 'config/database.yml', <<~YAML, force: true
     default: &default
       adapter: postgresql
       encoding: unicode
@@ -193,16 +192,26 @@ end
 
 # 调试工具
 add_gem 'pry-rails', '~> 0.3.9', group: %i[development test]
+add_gem 'pry-remote', '~> 0.1.8', group: %i[development test]
 
 # 开发工具
 add_gem 'guard-rails', '~> 0.8.1', group: :development
 add_gem 'guard-bundler', '~> 2.2', '>= 2.2.1', group: :development
 add_gem 'guard-livereload', '~> 2.5', '>= 2.5.2', group: :development
+add_gem 'guard-rspec', '~> 4.7', '>= 4.7.3', group: :development
 add_gem 'rubocop', '~> 0.76.0', group: %i[development test], require: false
 add_gem 'rubocop-rspec', '~> 1.36', group: %i[development test]
 
 stage_two do
   run 'guard init'
+  append_file 'Guardfile', <<~CODE.indent(2), after: "guard 'rails' do\n"
+    ignore(%r{config/routes\.rb})
+    ignore(%r{config/routes/})
+    ignore(%r{config/locales/})
+    ignore(%r{lib/templates/})
+  CODE
+
+  gsub_file 'Guardfile', "guard 'rails' do", "guard 'rails', port: ENV['PORT'] || '3000' do"
   create_file '.rubocop.yml', <<~YAML
     AllCops:
       TargetRubyVersion: 2.3
@@ -211,9 +220,41 @@ end
 
 # 测试工具
 add_gem 'rspec-rails', '~> 3.9', group: %i[development test]
+add_gem 'factory_bot_rails', '~> 5.1', '>= 5.1.1', group: %i[development test]
+add_gem 'shoulda-matchers', '~> 4.1', '>= 4.1.2', group: %i[development test]
+add_gem 'simplecov', '~> 0.17.0', group: %i[development test]
+
 stage_two do
   generate 'rspec:install'
+  append_file 'Rakefile', "load 'rspec/rails/tasks/rspec.rake'\n"
+  append_file '.gitignore', "/coverage\n"
+  uncomment_lines 'spec/rails_helper.rb', /'spec', 'support'/
+  insert_into_file 'spec/rails_helper.rb', after: "ENV['RAILS_ENV'] ||= 'test'\n" do
+    <<~RUBY
+      if ENV['RAILS_ENV'] == 'test'
+        require 'simplecov'
+        SimpleCov.start 'rails'
+      end
+    RUBY
+  end
+  create_file 'spec/support/shoulda.rb', <<~CODE
+    require 'shoulda-matchers'
+    Shoulda::Matchers.configure do |config|
+      config.integrate do |with|
+        with.test_framework :rspec
+        with.library :rails
+      end
+    end
+  CODE
 end
+
+# 配置通用组件
+
+add_gem 'kaminari', '~> 1.1', '>= 1.1.1'
+add_gem 'kaminari-i18n', '~> 0.5.0'
+add_gem 'rails-i18n', '~> 6.0'
+add_gem 'request_store', '~> 1.4', '>= 1.4.1'
+add_gem 'strip_attributes', '~> 1.9'
 
 # 配置 application
 inject_into_file 'config/application.rb', after: /config.load_defaults.*\n/ do
@@ -258,10 +299,10 @@ end
 add_gem 'bootstrap_form', '~> 4.3'
 add_gem 'meta-tags', '~> 2.13'
 
-run 'yarn add bootstrap@4'
-run 'yarn add jquery'
-run 'yarn add popper.js'
-run 'yarn upgrade'
+run 'yarn add bootstrap@4 --silent'
+run 'yarn add jquery --silent'
+run 'yarn add popper.js --silent'
+run 'yarn upgrade --silent'
 
 stage_two do
   generate 'meta_tags:install'
@@ -276,29 +317,28 @@ stage_two do
     @import 'rails_bootstrap_forms';
   SCSS
 
-  remove_file 'app/views/layouts/application.html.erb'
-  create_file 'app/views/layouts/application.html.erb', <<~HTML
-  <!DOCTYPE html>
-  <html>
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-      <%= display_meta_tags site: ENV['SITE_TITLE'] %>
-      <%= csrf_meta_tags %>
-      <%= csp_meta_tag %>
-      <%= stylesheet_pack_tag 'application' %>
-      <%= stylesheet_link_tag 'application', media: 'all' %>
-    </head>
+  create_file 'app/views/layouts/application.html.erb', <<~HTML, force: true
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+        <%= display_meta_tags site: ENV['SITE_TITLE'] %>
+        <%= csrf_meta_tags %>
+        <%= csp_meta_tag %>
+        <%= stylesheet_pack_tag 'application' %>
+        <%= stylesheet_link_tag 'application', media: 'all' %>
+      </head>
 
-    <body>
-      <%= render 'layouts/top_nav' %>
-      <main role="main" class="container">
-        <%= yield %>
-      </main>
-      <%= render 'layouts/footer' %>
-      <%= javascript_pack_tag 'application' %>
-    </body>
-  </html>
+      <body class="theme-default">
+        <%= render 'layouts/top_nav' %>
+        <main role="main" class="container">
+          <%= yield %>
+        </main>
+        <%= render 'layouts/footer' %>
+        <%= javascript_pack_tag 'application' %>
+      </body>
+    </html>
   HTML
 
   create_file 'app/views/layouts/_top_nav.html.erb', <<~HTML
@@ -348,26 +388,49 @@ stage_two do
 
   create_file 'app/javascript/bootstrap-ui/index.js', <<~JS
     import 'bootstrap'
-    import './custom.scss'
+    import './themes/default'
+    // 如果不需要支持多模版, 则注释掉上面这行, 改为:
+    // import './themes/default/solo'
   JS
 
-  create_file 'app/javascript/bootstrap-ui/custom.scss', <<~SCSS
+  create_file 'app/javascript/bootstrap-ui/themes/default/index.scss', <<~SCSS
+    .theme-default { // 皮肤名称
+      @import './variables_init';
+      @import './variables_override';
+      @import '~bootstrap/scss/bootstrap';
+      @import './styles_override';
+      @import './styles_custom';
+    }
+  SCSS
+
+  create_file 'app/javascript/bootstrap-ui/themes/default/solo.scss', <<~SCSS
+    // 如果不需要支持多模版, 则引用这个文件
+    @import './variables_init';
+    @import './variables_override';
+    @import '~bootstrap/scss/bootstrap';
+    @import './styles_override';
+    @import './styles_custom';
+  SCSS
+
+  create_file 'app/javascript/bootstrap-ui/themes/default/_variables_init.scss', <<~SCSS
+    // 说明: 在读取 bootstrap/scss/variables 之前定义变量, 都放在这里
+
     @import "~bootstrap/scss/functions";
     @import "~bootstrap/scss/mixins";
 
     $font-family-sans-serif:
-    // Safari for macOS and iOS (San Francisco)
-    -apple-system,
-    // Chrome < 56 for macOS (San Francisco)
-    BlinkMacSystemFont,
-    // Windows
-    "Segoe UI",
-    // Android
-    "Roboto",
-    // Basic web fallback
-    "Helvetica Neue", Arial, sans-serif,
-    // Emoji fonts
-    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+      // Safari for macOS and iOS (San Francisco)
+      -apple-system,
+      // Chrome < 56 for macOS (San Francisco)
+      BlinkMacSystemFont,
+      // Windows
+      "Segoe UI",
+      // Android
+      "Roboto",
+      // Basic web fallback
+      "Helvetica Neue", Arial, sans-serif,
+      // Emoji fonts
+      "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
 
     $theme-colors: (
       "primary": #0074d9,
@@ -401,24 +464,39 @@ stage_two do
     $input-padding-y: 0.25rem;
     $input-padding-x: 0.25rem;
 
-    // $border-radius:               0.25rem;
-    // $border-radius-lg:            0.3rem;
-    // $border-radius-sm:            0.2rem;
     $border-radius:               0.1rem;
     $border-radius-lg:            0.1rem;
     $border-radius-sm:            0.1rem;
 
-    // 以上是不需要用到 bootstrap/scss/variables 中的变量
-    // 以下是需要用到 bootstrap/scss/variables 中的变量
     @import "~bootstrap/scss/variables";
 
+  SCSS
+
+  create_file 'app/javascript/bootstrap-ui/themes/default/_variables_override.scss', <<~SCSS
+    // 说明: 在读取 bootstrap/scss/variables 之后覆盖变量, 都放在这里
+
     $input-focus-bg: rgba($input-focus-border-color, 0.15);
+  SCSS
 
-    @import '~bootstrap/scss/bootstrap';
+  create_file 'app/javascript/bootstrap-ui/themes/default/_styles_override.scss', <<~SCSS
+    // 覆盖 bootstrap 样式, 放入这里
 
-    body {
-      padding-top: 5rem;
-    }
+    // body {
+    //   background-color: black;
+    //   color: white;
+    // }
+
+    // .text-primary {
+    //   font-size: 5em;
+    // }
+  SCSS
+
+  create_file 'app/javascript/bootstrap-ui/themes/default/_styles_custom.scss', <<~SCSS
+    // 自定义样式, 放入这里
+
+    // .editable-container {
+    //   border: 5px solid blue;
+    // }
   SCSS
 
   inject_into_file 'app/javascript/packs/application.js', after: "require(\"channels\")\n" do
@@ -429,7 +507,7 @@ stage_two do
 
   inject_into_file 'config/webpacker.yml', after: /^development:[.\n]+? *<<: \*default\n/ do
     <<~YAML.indent(2)
-      extract_css: true
+      extract_css: true # this is for dev
     YAML
   end
 end
@@ -448,8 +526,7 @@ stage_two do
   generate 'devise:i18n:views -f'
   generate 'devise:i18n:locale zh-CN'
 
-  remove_file 'app/views/devise/sessions/new.html.erb'
-  create_file 'app/views/devise/sessions/new.html.erb', <<~HTML
+  create_file 'app/views/devise/sessions/new.html.erb', <<~HTML, force: true
     <h2><%= t('.sign_in') %></h2>
     <%= bootstrap_form_for(resource, as: resource_name, url: session_path(resource_name)) do |f| %>
       <%= f.email_field :email, autofocus: true, autocomplete: "email" %>
