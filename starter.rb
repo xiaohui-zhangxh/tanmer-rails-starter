@@ -501,14 +501,32 @@ stage_two do
 
   inject_into_file 'app/javascript/packs/application.js', after: "require(\"channels\")\n" do
     <<~JS
+      window.$ = window.jQuery = jQuery
       import '../bootstrap-ui'
     JS
   end
 
+  # 配置 webpacker
   inject_into_file 'config/webpacker.yml', after: /^development:[.\n]+? *<<: \*default\n/ do
     <<~YAML.indent(2)
       extract_css: true # this is for dev
     YAML
+  end
+
+  inject_into_file 'config/webpack/environment.js',
+                   "const webpack = require('webpack')\n",
+                   after: "const { environment } = require('@rails/webpacker')\n"
+  inject_into_file 'config/webpack/environment.js', before: "module.exports = environment" do
+    <<~JS
+      environment.plugins.prepend(
+        'Provide',
+        new webpack.ProvidePlugin({
+          $: 'jquery',
+          jQuery: 'jquery',
+          Popper: ['popper.js', 'default']
+        })
+      )
+    JS
   end
 end
 
