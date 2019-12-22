@@ -9,13 +9,17 @@ rvm use 2.6.3@$project_name --create --ruby-version
 # 更新 bundler
 gem install bundler
 bundle config mirror.https://rubygems.org https://gems.ruby-china.com
-# 安装 rails
+bundle config jobs $(nproc)
+# 如果是苹果电脑，配置 nokogiri 编译库的地址
+bundle config build.nokogiri "--with-xml2-include=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/libxml2 --use-system-libraries"
+# 安装 rails 6
 gem install rails
 # 生成 rails 项目
 rails new . -d postgresql --skip-turbolinks --skip-test --skip-system-test --webpacker vue
 # 提交 git 更改
 git add .
 git commit -m "init"
+rake db:create
 ```
 
 ```shell
