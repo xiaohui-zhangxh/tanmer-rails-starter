@@ -20,7 +20,9 @@ module Gemfile
 
     def gem_args_string
       args = ["'#{@name}'"]
-      args << "'#{@version}'" if @version
+      Array(@version).each do |v|
+        args << "'#{v}'"
+      end
       @opts.each do |name, value|
         args << "#{name}: #{value.inspect}"
       end
@@ -32,17 +34,16 @@ module Gemfile
 
   class << self
     # add(name, version, opts={})
-    def add(name, *args)
+    def add(name, *versions, **opts)
       name = name.to_s
-      version = args.first && !args.first.is_a?(Hash) ? args.shift : nil
-      opts = args.first && args.first.is_a?(Hash) ? args.shift : {}
       @geminfo[name] = (@geminfo[name] || GemInfo.new(name)).tap do |info|
-        info.version = version if version
+        info.version = versions
         info.opts = opts
       end
     end
 
     def write
+      # TODO: 检查已有的 gem ，不要添加重复记录
       File.open('Gemfile', 'a') do |file|
         file.puts
         grouped_gem_names.sort.each do |group, gem_names|
@@ -149,12 +150,18 @@ stage_two do
     # don't change this file!!!
     SITE_TITLE='#{@app_name.humanize.upcase}'
     COPYRIGHT='Tanmer Inc.'
+    SECRET_KEY_BASE=
+
     #{@app_name.upcase}_PGSQL_HOST=
     #{@app_name.upcase}_PGSQL_PORT=
     #{@app_name.upcase}_PGSQL_USERNAME=
     #{@app_name.upcase}_PGSQL_PASSWORD=
     #{@app_name.upcase}_PGSQL_DATABASE_PREFIX='#{@app_name}'
-    SECRET_KEY_BASE=
+
+    REDIS_URL=
+    REDIS_NAMESPACE=#{@app_name}
+    REDIS_POOLS=25
+
     ELASTIC_APM_SERVER_URL=
     SENTRY_DSN=
     RELEASE_COMMIT=
@@ -165,6 +172,9 @@ stage_two do
     #{@app_name.upcase}_PGSQL_PORT='5432'
     #{@app_name.upcase}_PGSQL_USERNAME='#{ask_wizard('PGSQL 用户名')}'
     #{@app_name.upcase}_PGSQL_PASSWORD='#{ask_wizard('PGSQL 密码')}'
+    REDIS_URL=redis://localhost:6379/0
+    REDIS_NAMESPACE=#{@app_name}-dev
+    REDIS_POOLS=5
     SECRET_KEY_BASE=#{SecureRandom.hex(8)}
   ENV
 end
@@ -252,7 +262,6 @@ add_gem 'factory_bot_rails', '~> 5.1', '>= 5.1.1', group: %i[development test]
 add_gem 'shoulda-matchers', '~> 4.1', '>= 4.1.2', group: %i[development test]
 add_gem 'simplecov', '~> 0.17.0', group: %i[development test]
 add_gem 'database_cleaner', '~> 1.7', group: %i[development test]
-add_gem 'capybara', '~> 3.29', group: %i[development test]
 
 stage_two do
   generate 'rspec:install'
@@ -336,6 +345,13 @@ add_gem 'kaminari-i18n', '~> 0.5.0'
 add_gem 'rails-i18n', '~> 6.0'
 add_gem 'request_store', '~> 1.4', '>= 1.4.1'
 add_gem 'strip_attributes', '~> 1.9'
+add_gem 'redis', '~> 4.1', '>= 4.1.3'
+add_gem 'redis-namespace', '~> 1.7'
+add_gem "sidekiq", "~> 6.0"
+add_gem 'sidekiq-cron', '~> 1.1'
+add_gem 'redis-objects', '~> 1.5'
+add_gem "wisper", "~> 2.0"
+add_gem "wisper-sidekiq", "~> 1.2"
 
 # 配置 application
 inject_into_file 'config/application.rb', after: /config.load_defaults.*\n/ do
@@ -347,19 +363,57 @@ inject_into_file 'config/application.rb', after: /config.load_defaults.*\n/ do
     config.generators.stylesheets = false
     config.generators.jbuilder = false
     config.active_record.schema_format = :sql
-    config.to_prepare do
-      Dir.glob(Rails.root.join('app/loaders/**/*_loader.rb')).each do |file|
-        load file
-      end
-    end
   RUBY
 end
 
-# 添加监控组件
+# 配置 redis
+
+create_file 'config/initializers/redis.rb', <<~RUBY
+  redis_conn = proc {
+    Redis::Namespace.new(
+      ENV.fetch('REDIS_NAMESPACE'),
+      redis: Redis.new(url: ENV.fetch('REDIS_URL'))
+    )
+  }
+
+  pool = ConnectionPool.new(size: ENV.fetch('REDIS_POOLS', 5).to_i, &redis_conn)
+  Redis.current = redis_conn.call
+
+  Sidekiq.configure_client do |config|
+    config.redis = pool
+  end
+
+  Sidekiq.configure_server do |config|
+    config.redis = pool
+  end
+RUBY
+
+# 添加监控、日志类组件
+add_gem 'lograge', '~> 0.11.2'
 add_gem 'elastic-apm', '~> 3.1', require: false
 add_gem 'sentry-raven', '~> 2.12.2', require: false
 
 stage_two do
+  inject_into_file 'config/environments/production.rb', before: /^end\n$/ do
+    '  config.lograge.enabled = true'
+  end
+  create_file 'config/initializers/lograge.rb', <<~RUBY
+    # https://github.com/roidrage/lograge/
+    Rails.application.configure do
+      config.lograge.ignore_actions = [] # ['HomeController#index', 'AController#an_action']
+      config.lograge.formatter = Lograge::Formatters::Json.new
+      config.lograge.custom_options = lambda do |_event|
+        { time: Time.zone.now }
+      end
+      config.lograge.custom_payload do |controller|
+        {}.tap do |h|
+          h.update host: controller.request.host
+          h.update ip: controller.request.remote_ip
+          h.update user_id: controller.current_user&.id if controller.respond_to?(:current_user)
+        end
+      end
+    end
+  RUBY
   create_file 'config/initializers/elastic_apm.rb', <<~RUBY
     if ENV['ELASTIC_APM_SERVER_URL'].present?
       require 'elastic_apm'
@@ -385,7 +439,7 @@ add_gem 'bootstrap_form', '~> 4.3'
 add_gem 'meta-tags', '~> 2.13'
 
 run 'yarn add bootstrap@4 --silent'
-run 'yarn add jquery --silent'
+run 'yarn add jquery@3 --silent'
 run 'yarn add popper.js --silent'
 run 'yarn upgrade --silent'
 
@@ -421,7 +475,7 @@ stage_two do
           <%= yield %>
         </main>
         <%= render 'layouts/footer' %>
-        <%= javascript_pack_tag 'application' %>
+        <%= javascript_packs_with_chunks_tag 'application' %>
       </body>
     </html>
   HTML
@@ -630,6 +684,11 @@ stage_two do
           Popper: ['popper.js', 'default']
         })
       )
+      environment.plugins.prepend('Environment', new webpack.EnvironmentPlugin({
+        SENTRY_JS_DSN: null,
+        RELEASE_COMMIT: null
+      }))
+      environment.splitChunks()
     JS
   end
 end
@@ -644,6 +703,7 @@ stage_two do
                    "  config.action_mailer.default_url_options = { host: 'localhost', port: 3000 }",
                    after: "config.action_mailer.perform_caching = false\n"
   generate 'devise user'
+  sleep 2 # don't know why generate 'devise:views' fails without delay
   generate 'devise:views'
   generate 'devise:i18n:views -f'
   generate 'devise:i18n:locale zh-CN'
