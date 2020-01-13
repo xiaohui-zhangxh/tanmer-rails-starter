@@ -19,10 +19,11 @@ rails new . -d postgresql --skip-turbolinks --skip-test --skip-system-test --web
 # 提交 git 更改
 git add .
 git commit -m "init"
-rake db:create
 ```
 
 ```shell
 # 应用 tanmer rails starter
 DISABLE_SPRING=1 LOCATION=https://raw.githubusercontent.com/xiaohui-zhangxh/tanmer-rails-starter/master/starter.rb rake app:template
+rake db:create
+rake db:migrate
 ```

@@ -141,43 +141,44 @@ comment_lines 'Gemfile', /^gem 'tzinfo-data'/
 
 # 环境变量
 add_gem 'dotenv-rails', '~> 2.7', '>= 2.7.5'
-stage_two do
-  %w[.env.development.local	.env.test.local	.env.production.local	.env.local].each do |fn|
-    append_file '.gitignore', "#{fn}\n"
-  end
-  create_file '.env', <<~ENV
-    # copy this file to .env.local for development
-    # don't change this file!!!
-    SITE_TITLE='#{@app_name.humanize.upcase}'
-    COPYRIGHT='Tanmer Inc.'
-    SECRET_KEY_BASE=
 
-    #{@app_name.upcase}_PGSQL_HOST=
-    #{@app_name.upcase}_PGSQL_PORT=
-    #{@app_name.upcase}_PGSQL_USERNAME=
-    #{@app_name.upcase}_PGSQL_PASSWORD=
-    #{@app_name.upcase}_PGSQL_DATABASE_PREFIX='#{@app_name}'
-
-    REDIS_URL=
-    REDIS_NAMESPACE=#{@app_name}
-    REDIS_POOLS=25
-
-    ELASTIC_APM_SERVER_URL=
-    SENTRY_DSN=
-    RELEASE_COMMIT=
-  ENV
-
-  create_file '.env.local.example', <<~ENV
-    #{@app_name.upcase}_PGSQL_HOST='localhost'
-    #{@app_name.upcase}_PGSQL_PORT='5432'
-    #{@app_name.upcase}_PGSQL_USERNAME='#{ask_wizard('PGSQL 用户名')}'
-    #{@app_name.upcase}_PGSQL_PASSWORD='#{ask_wizard('PGSQL 密码')}'
-    REDIS_URL=redis://localhost:6379/0
-    REDIS_NAMESPACE=#{@app_name}-dev
-    REDIS_POOLS=5
-    SECRET_KEY_BASE=#{SecureRandom.hex(8)}
-  ENV
+%w[.env.development.local	.env.test.local	.env.production.local	.env.local].each do |fn|
+  append_file '.gitignore', "#{fn}\n"
 end
+create_file '.env', <<~ENV
+  # copy this file to .env.local for development
+  # don't change this file!!!
+  SITE_TITLE='#{@app_name.humanize.upcase}'
+  COPYRIGHT='Tanmer Inc.'
+  SECRET_KEY_BASE=
+
+  #{@app_name.upcase}_PGSQL_HOST=
+  #{@app_name.upcase}_PGSQL_PORT=
+  #{@app_name.upcase}_PGSQL_USERNAME=
+  #{@app_name.upcase}_PGSQL_PASSWORD=
+  #{@app_name.upcase}_PGSQL_DATABASE_PREFIX='#{@app_name}'
+
+  REDIS_URL=
+  REDIS_NAMESPACE=#{@app_name}
+  REDIS_POOLS=25
+
+  ELASTIC_APM_SERVER_URL=
+  SENTRY_DSN=
+  RELEASE_COMMIT=
+ENV
+
+create_file '.env.local.example', <<~ENV
+  #{@app_name.upcase}_PGSQL_HOST='localhost'
+  #{@app_name.upcase}_PGSQL_PORT='5432'
+  #{@app_name.upcase}_PGSQL_USERNAME='#{ask_wizard('PGSQL 用户名')}'
+  #{@app_name.upcase}_PGSQL_PASSWORD='#{ask_wizard('PGSQL 密码')}'
+  REDIS_URL=redis://localhost:6379/0
+  REDIS_NAMESPACE=#{@app_name}-dev
+  REDIS_POOLS=5
+  SECRET_KEY_BASE=#{SecureRandom.hex(8)}
+ENV
+
+run 'cp .env.local.example .env.development.local'
 
 # 数据库配置
 
@@ -367,26 +368,27 @@ inject_into_file 'config/application.rb', after: /config.load_defaults.*\n/ do
 end
 
 # 配置 redis
+stage_two do
+  create_file 'config/initializers/redis.rb', <<~RUBY
+    redis_conn = proc {
+      Redis::Namespace.new(
+        ENV.fetch('REDIS_NAMESPACE'),
+        redis: Redis.new(url: ENV.fetch('REDIS_URL'))
+      )
+    }
 
-create_file 'config/initializers/redis.rb', <<~RUBY
-  redis_conn = proc {
-    Redis::Namespace.new(
-      ENV.fetch('REDIS_NAMESPACE'),
-      redis: Redis.new(url: ENV.fetch('REDIS_URL'))
-    )
-  }
+    pool = ConnectionPool.new(size: ENV.fetch('REDIS_POOLS', 5).to_i, &redis_conn)
+    Redis.current = redis_conn.call
 
-  pool = ConnectionPool.new(size: ENV.fetch('REDIS_POOLS', 5).to_i, &redis_conn)
-  Redis.current = redis_conn.call
+    Sidekiq.configure_client do |config|
+      config.redis = pool
+    end
 
-  Sidekiq.configure_client do |config|
-    config.redis = pool
-  end
-
-  Sidekiq.configure_server do |config|
-    config.redis = pool
-  end
-RUBY
+    Sidekiq.configure_server do |config|
+      config.redis = pool
+    end
+  RUBY
+end
 
 # 添加监控、日志类组件
 add_gem 'lograge', '~> 0.11.2'
@@ -438,8 +440,8 @@ end
 add_gem 'bootstrap_form', '~> 4.3'
 add_gem 'meta-tags', '~> 2.13'
 
-run 'yarn add bootstrap@4 --silent'
 run 'yarn add jquery@3 --silent'
+run 'yarn add bootstrap@4 --silent'
 run 'yarn add popper.js --silent'
 run 'yarn upgrade --silent'
 
@@ -704,8 +706,10 @@ stage_two do
                    after: "config.action_mailer.perform_caching = false\n"
   generate 'devise user'
   sleep 2 # don't know why generate 'devise:views' fails without delay
-  generate 'devise:views'
-  generate 'devise:i18n:views -f'
+  if yes_wizard?('生成 devise views 吗？')
+    generate 'devise:views'
+    generate 'devise:i18n:views -f'
+  end
   generate 'devise:i18n:locale zh-CN'
 
   create_file 'app/views/devise/sessions/new.html.erb', <<~HTML, force: true
