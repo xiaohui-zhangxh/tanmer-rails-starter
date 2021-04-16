@@ -124,13 +124,12 @@ def stage_four(&block); @stage_four_blocks << [@current_recipe, block]; end
 @before_configs = {}
 def before_config(&block); @before_configs[@current_recipe] = block; end
 
-# this application template only supports Rails version 4.1 and newer
-case Rails::VERSION::MAJOR.to_s
-when "6"
+# this application template only supports Rails version 6.1
 
-else
-  say_wizard "You are using Rails version #{Rails::VERSION::STRING} which is not supported. Use Rails 6"
-  raise StandardError.new "Rails #{Rails::VERSION::STRING} is not supported. Use Rails 6"
+SUPPORTED_RAILS_VERSION = '6.1'
+unless [Rails::VERSION::MAJOR, Rails::VERSION::MINOR].join('.') == SUPPORTED_RAILS_VERSION
+  say_wizard "You are using Rails version #{Rails::VERSION::STRING} which is not supported. Use Rails #{SUPPORTED_RAILS_VERSION}"
+  exit(1)
 end
 
 # >----------------------------[ Core script end ]------------------------------<
@@ -140,7 +139,7 @@ end
 comment_lines 'Gemfile', /^gem 'tzinfo-data'/
 
 # 环境变量
-add_gem 'dotenv-rails', '~> 2.7', '>= 2.7.5'
+add_gem 'dotenv-rails', '~> 2.7', '>= 2.7.6'
 
 %w[.env.development.local	.env.test.local	.env.production.local	.env.local].each do |fn|
   append_file '.gitignore', "#{fn}\n"
@@ -148,37 +147,42 @@ end
 create_file '.env', <<~ENV
   # copy this file to .env.local for development
   # don't change this file!!!
+
   SITE_TITLE='#{@app_name.humanize.upcase}'
   COPYRIGHT='Tanmer Inc.'
   SECRET_KEY_BASE=
 
+  # 数据库配置
   #{@app_name.upcase}_PGSQL_HOST=
   #{@app_name.upcase}_PGSQL_PORT=
   #{@app_name.upcase}_PGSQL_USERNAME=
   #{@app_name.upcase}_PGSQL_PASSWORD=
-  #{@app_name.upcase}_PGSQL_DATABASE_PREFIX='#{@app_name}'
+  #{@app_name.upcase}_PGSQL_DATABASE_PREFIX=#{@app_name}
 
-  REDIS_URL=
+  # Redis 配置
+  REDIS_URL=redis://localhost:6379/0
   REDIS_NAMESPACE=#{@app_name}
-  REDIS_POOLS=25
+  REDIS_POOLS=10
 
-  ELASTIC_APM_SERVER_URL=
+  # Cookie 加密密钥
+  SECRET_KEY_BASE=
+
+  # Sentry 监控配置
   SENTRY_DSN=
-  RELEASE_COMMIT=
 ENV
 
-create_file '.env.local.example', <<~ENV
-  #{@app_name.upcase}_PGSQL_HOST='localhost'
-  #{@app_name.upcase}_PGSQL_PORT='5432'
-  #{@app_name.upcase}_PGSQL_USERNAME='#{ask_wizard('PGSQL 用户名')}'
-  #{@app_name.upcase}_PGSQL_PASSWORD='#{ask_wizard('PGSQL 密码')}'
+create_file '.env.development', <<~ENV
+  #{@app_name.upcase}_PGSQL_HOST=localhost
+  #{@app_name.upcase}_PGSQL_PORT=5432
+  #{@app_name.upcase}_PGSQL_USERNAME=#{ask_wizard('PGSQL 用户名: ')}
+  #{@app_name.upcase}_PGSQL_PASSWORD=#{ask_wizard('PGSQL 密码: ')}
   REDIS_URL=redis://localhost:6379/0
   REDIS_NAMESPACE=#{@app_name}-dev
   REDIS_POOLS=5
   SECRET_KEY_BASE=#{SecureRandom.hex(8)}
 ENV
 
-run 'cp .env.local.example .env.development.local'
+run 'cp .env.development .env.development.local'
 
 # 数据库配置
 
@@ -204,6 +208,14 @@ stage_two do
     production:
       <<: *default
       database: <%= ENV.fetch('#{app_name.upcase}_PGSQL_DATABASE_PREFIX') %>_prod
+
+    staging:
+      <<: *default
+      database: <%= ENV.fetch('#{app_name.upcase}_PGSQL_DATABASE_PREFIX') %>_staging
+
+    dev:
+      <<: *default
+      database: <%= ENV.fetch('#{app_name.upcase}_PGSQL_DATABASE_PREFIX') %>_dev
   YAML
 end
 
@@ -216,7 +228,6 @@ add_gem 'guard-rails', '~> 0.8.1', group: :development
 add_gem 'guard-bundler', '~> 2.2', '>= 2.2.1', group: :development
 add_gem 'guard-livereload', '~> 2.5', '>= 2.5.2', group: :development
 add_gem 'guard-rspec', '~> 4.7', '>= 4.7.3', group: :development
-add_gem 'rubocop-tanmer', '~> 0.2.0', group: %i[development test], require: false
 add_gem 'yard', '~> 0.9.20', group: %i[development]
 
 stage_two do
@@ -233,11 +244,11 @@ stage_two do
     require:
       - rubocop-rspec
       - rubocop-rails
-    inherit_gem:
-      rubocop-tanmer:
-        - config/default.yml
+    # inherit_gem:
+    #   rubocop-tanmer:
+    #     - config/default.yml
     AllCops:
-      TargetRubyVersion: 2.3
+      TargetRubyVersion: 2.5
   YAML
   append_file '.gitignore', <<~TEXT
     /.yardoc
@@ -344,15 +355,15 @@ end
 add_gem 'kaminari', '~> 1.1', '>= 1.1.1'
 add_gem 'kaminari-i18n', '~> 0.5.0'
 add_gem 'rails-i18n', '~> 6.0'
-add_gem 'request_store', '~> 1.4', '>= 1.4.1'
-add_gem 'strip_attributes', '~> 1.9'
-add_gem 'redis', '~> 4.1', '>= 4.1.3'
-add_gem 'redis-namespace', '~> 1.7'
-add_gem "sidekiq", "~> 6.0"
-add_gem 'sidekiq-cron', '~> 1.1'
+add_gem 'strip_attributes', '~> 1.11'
+add_gem 'redis', '~> 4.2', '>= 4.2.5'
+add_gem 'redis-namespace', '~> 1.8', '>= 1.8.1'
+add_gem 'sidekiq', '~> 6.2', '>= 6.2.1'
+add_gem 'sidekiq-cron', '~> 1.2'
+add_gem 'sidekiq-throttled', '~> 0.13.0'
 add_gem 'redis-objects', '~> 1.5'
-add_gem "wisper", "~> 2.0"
-add_gem "wisper-sidekiq", "~> 1.2"
+add_gem 'wisper', '~> 2.0', '>= 2.0.1'
+add_gem 'wisper-sidekiq', '~> 1.3'
 
 # 配置 application
 inject_into_file 'config/application.rb', after: /config.load_defaults.*\n/ do
@@ -363,22 +374,55 @@ inject_into_file 'config/application.rb', after: /config.load_defaults.*\n/ do
     config.generators.helper = false
     config.generators.stylesheets = false
     config.generators.jbuilder = false
-    config.active_record.schema_format = :sql
+    # config.active_record.schema_format = :sql
   RUBY
 end
 
+create_file 'config/environments/dev.rb', <<~RUBY
+  require_relative 'production'
+RUBY
+
+create_file 'config/environments/staging.rb', <<~RUBY
+  require_relative 'production'
+RUBY
+
 # 配置 redis
 stage_two do
-  create_file 'config/initializers/redis.rb', <<~RUBY
-    redis_conn = proc {
-      Redis::Namespace.new(
-        ENV.fetch('REDIS_NAMESPACE'),
-        redis: Redis.new(url: ENV.fetch('REDIS_URL'))
-      )
-    }
+  create_file 'lib/redis_connection_builder.rb', <<~RUBY
+    class RedisConnectionBuilder
+      def initialize(namespace:, prefix:, url:)
+        @namespace = namespace
+        @prefix = prefix
+        @url = url
+      end
 
-    pool = ConnectionPool.new(size: ENV.fetch('REDIS_POOLS', 5).to_i, &redis_conn)
-    Redis.current = redis_conn.call
+      def call
+        Redis::Namespace.new([@namespace, @prefix].compact.join('-'), redis: Redis.new(url: @url))
+      end
+
+      def to_proc
+        proc { call }
+      end
+    end
+  RUBY
+
+  create_file 'config/initializers/redis.rb', <<~RUBY
+    require 'redis_connection_builder'
+
+    Redis.current = RedisConnectionBuilder.new(
+      namespace: ENV.fetch('REDIS_NAMESPACE'),
+      prefix: 'common',
+      url: ENV.fetch('REDIS_URL')
+    ).call
+
+    pool = ConnectionPool.new(
+      size: ENV.fetch('REDIS_POOLS', 5).to_i,
+      &RedisConnectionBuilder.new(
+        namespace: ENV.fetch('REDIS_NAMESPACE'),
+        prefix: 'sidekiq',
+        url: ENV.fetch('REDIS_URL')
+      ).to_proc
+    )
 
     Sidekiq.configure_client do |config|
       config.redis = pool
@@ -392,12 +436,11 @@ end
 
 # 添加监控、日志类组件
 add_gem 'lograge', '~> 0.11.2'
-add_gem 'elastic-apm', '~> 3.1', require: false
-add_gem 'sentry-raven', '~> 2.12.2', require: false
+add_gem 'sentry-raven', '~> 3.1', '>= 3.1.2'
 
 stage_two do
   inject_into_file 'config/environments/production.rb', before: /^end\n$/ do
-    '  config.lograge.enabled = true'
+    "  config.lograge.enabled = true\n"
   end
   create_file 'config/initializers/lograge.rb', <<~RUBY
     # https://github.com/roidrage/lograge/
@@ -416,33 +459,39 @@ stage_two do
       end
     end
   RUBY
-  create_file 'config/initializers/elastic_apm.rb', <<~RUBY
-    if ENV['ELASTIC_APM_SERVER_URL'].present?
-      require 'elastic_apm'
-      config.elastic_apm.service_name = "#{@app_name}-\#{Rails.env}"
-    end
-  RUBY
+
   create_file 'config/initializers/sentry.rb', <<~RUBY
     require 'raven/base'
-    if ENV['SENTRY_DSN'].present? && !(Rails.env.development? || Rails.env.test?)
+    if ENV['SENTRY_DSN'].present?
+      require 'sentry-raven'
+      require 'raven/integrations/rails'
+      require 'raven/integrations/sidekiq'
       Raven.configure do |config|
+        config.async = lambda { |event|
+          SentryJob.perform_later(event)
+        }
         config.dsn = ENV['SENTRY_DSN']
+        config.breadcrumbs_logger = [:active_support_logger]
         config.sanitize_fields = Rails.application.config.filter_parameters.map(&:to_s)
-        config.release = ENV['RELEASE_COMMIT']
+        release_commit_file = Rails.root.join('RELEASE_COMMIT')
+        release_commit = IO.read(release_commit_file).strip if File.exist?(release_commit_file)
+        config.release = release_commit if release_commit.present?
+        config.environments = %w[dev staging production]
       end
-      Raven.inject
     end
   RUBY
 end
 
 # 配置 UI
-
-add_gem 'bootstrap_form', '~> 4.3'
-add_gem 'meta-tags', '~> 2.13'
+add_gem 'active_link_to', '~> 1.0', '>= 1.0.5'
+add_gem 'bootstrap_form', '~> 4.5'
+add_gem 'meta-tags', '~> 2.14'
 
 run 'yarn add jquery@3 --silent'
-run 'yarn add bootstrap@4 --silent'
-run 'yarn add popper.js --silent'
+run 'yarn add bootstrap@4.5 --silent'
+run 'yarn add popper.js@1.16.1 --silent'
+run 'yarn add bootstrap-notify --silent'
+run 'yarn add animate.css --silent'
 run 'yarn upgrade --silent'
 
 stage_two do
@@ -469,6 +518,7 @@ stage_two do
         <%= csp_meta_tag %>
         <%= stylesheet_pack_tag 'application' %>
         <%= stylesheet_link_tag 'application', media: 'all' %>
+        <%= javascript_packs_with_chunks_tag 'application' %>
       </head>
 
       <body class="theme-default">
@@ -477,7 +527,6 @@ stage_two do
           <%= yield %>
         </main>
         <%= render 'layouts/footer' %>
-        <%= javascript_packs_with_chunks_tag 'application' %>
       </body>
     </html>
   HTML
@@ -534,9 +583,9 @@ stage_two do
   create_file 'app/javascript/bootstrap-ui/themes/default/index.scss', <<~SCSS
     @import "~bootstrap/scss/functions";
     @import "~bootstrap/scss/mixins";
-    @import './variable_inits';
+    @import './01_init_variables';
     @import "~bootstrap/scss/variables";
-    @import './variable_overrides';
+    @import './02_override_variables';
     @import "~bootstrap/scss/root";
     @import "~bootstrap/scss/reboot";
     @import "~bootstrap/scss/type";
@@ -571,11 +620,11 @@ stage_two do
     @import "~bootstrap/scss/spinners";
     @import "~bootstrap/scss/utilities";
     @import "~bootstrap/scss/print";
-    @import './component_overrides';
-    @import './custom_styles';
+    @import './03_override_components';
+    @import './04_custom_styles';
   SCSS
 
-  create_file 'app/javascript/bootstrap-ui/themes/default/_variable_inits.scss', <<~SCSS
+  create_file 'app/javascript/bootstrap-ui/themes/default/_01_init_variables.scss', <<~SCSS
     // 说明: 在读取 bootstrap/scss/variables 之前定义变量, 都放在这里
 
     $font-family-sans-serif:
@@ -630,13 +679,13 @@ stage_two do
 
   SCSS
 
-  create_file 'app/javascript/bootstrap-ui/themes/default/_variable_overrides.scss', <<~SCSS
+  create_file 'app/javascript/bootstrap-ui/themes/default/_02_override_variables.scss', <<~SCSS
     // 说明: 在读取 bootstrap/scss/variables 之后覆盖变量, 都放在这里
 
     $input-focus-bg: rgba($input-focus-border-color, 0.15);
   SCSS
 
-  create_file 'app/javascript/bootstrap-ui/themes/default/component_overrides/_index.scss', <<~SCSS
+  create_file 'app/javascript/bootstrap-ui/themes/default/03_override_components/_index.scss', <<~SCSS
     // 覆盖 bootstrap 组件样式, 根据 bootstrap 源代码对应的文件名，在本目录创建一个文件，单独覆盖。
     // 然后统一在这个文件导入
 
@@ -644,7 +693,7 @@ stage_two do
     // @import "./custom-forms";
   SCSS
 
-  create_file 'app/javascript/bootstrap-ui/themes/default/_custom_styles.scss', <<~SCSS
+  create_file 'app/javascript/bootstrap-ui/themes/default/_04_custom_styles.scss', <<~SCSS
     // 自定义样式, 放入这里
 
     main.container {
@@ -657,10 +706,9 @@ stage_two do
     import "regenerator-runtime/runtime";
 
   JS
-  inject_into_file 'app/javascript/packs/application.js', after: "require(\"channels\")\n" do
-    <<~JS
 
-      window.$ = window.jQuery = jQuery
+  append_to_file 'app/javascript/packs/application.js' do
+    <<~JS
       import '../bootstrap-ui'
     JS
   end
@@ -696,9 +744,9 @@ stage_two do
 end
 
 # 用户登录
-add_gem 'devise', '~> 4.7', '>= 4.7.1'
-add_gem 'devise-i18n', '~> 1.8', '>= 1.8.2'
-
+add_gem 'devise', '~> 4.7', '>= 4.7.3'
+add_gem 'devise-i18n', '~> 1.9', '>= 1.9.3'
+add_gem 'cancancan', '~> 3.2', '>= 3.2.1'
 stage_two do
   generate "devise:install"
   inject_into_file 'config/environments/development.rb',
@@ -762,6 +810,10 @@ stage_three do
   MARKDOWN
 end
 
+stage_two do
+
+end
+
 # >-----------------------------[ Final Gemfile Write ]------------------------------<
 Gemfile.write
 
@@ -776,6 +828,6 @@ Gem.clear_paths
 Bundler.with_unbundled_env do
 # >-----------------------------[ Run 'stage_two' Callbacks ]-------------------------------<
 
-say_wizard "Stage Two (running recipe 'stage_two' callbacks)."
-@after_blocks.each{|b| config = @configs[b[0]] || {}; @current_recipe = b[0]; puts @current_recipe; b[1].call}
+  say_wizard "Stage Two (running recipe 'stage_two' callbacks)."
+  @after_blocks.each{|b| config = @configs[b[0]] || {}; @current_recipe = b[0]; puts @current_recipe; b[1].call}
 end
